@@ -254,6 +254,11 @@ document.addEventListener('DOMContentLoaded', async function() {
   /* ── apply section + electives, then sync with the uploaded timetable ── */
   function applyAll(section, electiveIds, byName) {
     if (!window.__iimApp) return;
+    // Clear the grid BEFORE applySection so it finds no conflicts when placing
+    // the new section's courses. applySection checks each slot for conflicts
+    // and silently skips any course whose slot is already occupied — leaving
+    // the old section's courses in place causes most new courses to be skipped.
+    try { if (window.__iimApp.onClearAll) window.__iimApp.onClearAll(); } catch(e) {}
     window.__iimApp.applySection(section);
     setTimeout(function() {
       var sel = document.querySelector('select');
