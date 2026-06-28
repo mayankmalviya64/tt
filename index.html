@@ -461,6 +461,25 @@ document.addEventListener('DOMContentLoaded', async function() {
     personalizeUI(name, section);
   }
 
+  /* ── auto-load default timetable from assets/timetable.xlsx ── */
+  function loadDefaultTimetable(cb) {
+    if (!window.XLSX || !window.__iimApp || !window.__iimApp.parseUploadedTimetable) { cb(); return; }
+    fetch('assets/timetable.xlsx')
+      .then(function(r) { if (!r.ok) throw new Error('not found'); return r.arrayBuffer(); })
+      .then(function(buf) {
+        try {
+          var wb = window.XLSX.read(new Uint8Array(buf), { type: 'array' });
+          var ws = wb.Sheets[wb.SheetNames[0]];
+          var grid = window.XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+          var merges = ws['!merges'] || [];
+          var byName = window.__iimApp.parseUploadedTimetable(grid, merges);
+          window.__iimApp.syncUploadedTimetable(byName);
+        } catch(e) { console.warn('[iim] timetable parse error:', e); }
+        cb();
+      })
+      .catch(function() { cb(); }); // silently skip on file:// or network error
+  }
+
   /* ── INIT ── */
   document.addEventListener('DOMContentLoaded', function() {
     setFavicon();
@@ -491,22 +510,25 @@ document.addEventListener('DOMContentLoaded', async function() {
       addFooter();
       var profile = getProfile();
       var saved   = getSaved();
-      if (!profile) {
-        showOnboarding(null, function(name, section, elecs) {
-          patchButtons(name, section);
-          applyAll(section, elecs);
-          setTimeout(function() { watchAndPersonalize(name, section); }, 300);
-        });
-        // Onboarding overlay (z:9999) sits above cover (z:9990); fade cover so onboarding appears
-        setTimeout(fadeCover, 60);
-      } else {
-        patchButtons(profile.name, profile.section);
-        applyAll(profile.section, saved);
-        setTimeout(function() {
-          watchAndPersonalize(profile.name, profile.section);
-          fadeCover();
-        }, 300);
-      }
+      // Load updated timetable first, then show onboarding or apply profile
+      loadDefaultTimetable(function() {
+        if (!profile) {
+          showOnboarding(null, function(name, section, elecs) {
+            patchButtons(name, section);
+            applyAll(section, elecs);
+            setTimeout(function() { watchAndPersonalize(name, section); }, 300);
+          });
+          // Onboarding overlay (z:9999) sits above cover (z:9990); fade cover so onboarding appears
+          setTimeout(fadeCover, 60);
+        } else {
+          patchButtons(profile.name, profile.section);
+          applyAll(profile.section, saved);
+          setTimeout(function() {
+            watchAndPersonalize(profile.name, profile.section);
+            fadeCover();
+          }, 300);
+        }
+      });
     }
     _tryInit();
   });
