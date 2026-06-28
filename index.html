@@ -485,6 +485,16 @@ document.addEventListener('DOMContentLoaded', async function() {
           var wb = window.XLSX.read(new Uint8Array(buf), { type: 'array' });
           var ws = wb.Sheets[wb.SheetNames[0]];
           var grid = window.XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+          // Strip trailing commas/spaces from every string cell — the academic
+          // office Excel often ends course names with ", " (e.g. "Enterprise Digital
+          // Transformation, ") which breaks the normalised-name match against the
+          // app's course list and leaves those courses in their old bundle positions.
+          grid = grid.map(function(row) {
+            if (!row) return row;
+            return row.map(function(cell) {
+              return typeof cell === 'string' ? cell.trim().replace(/[,\s]+$/, '') : cell;
+            });
+          });
           var merges = ws['!merges'] || [];
           cb(window.__iimApp.parseUploadedTimetable(grid, merges));
         } catch(e) { console.warn('[iim] timetable parse error:', e); cb(null); }
