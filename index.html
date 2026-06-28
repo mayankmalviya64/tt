@@ -219,24 +219,35 @@ document.addEventListener('DOMContentLoaded', async function() {
   }
 
   /* ── patch renderVals at source so the reactive framework renders the right text ── */
-  // The framework re-renders the header every second (clock), so MutationObserver-based
-  // replacements always lose the race. Patching renderVals makes the framework itself
-  // output the correct title, program label, and suppresses the "Placed X..." toasts.
+  // The framework re-renders the header every second (clock), so a MutationObserver always
+  // loses the race. We wrap renderVals ONCE and store mutable vars so repeated Modify calls
+  // never build up a chain of wrappers (chain-patching would break PGDM→MBA-OSCM switches).
+  var _rvFirstName = '';
+  var _rvProg = 'MBA';
   function patchRenderVals(firstName, section) {
     if (!window.__iimApp || typeof window.__iimApp.renderVals !== 'function') return;
-    var prog = progName(section);
-    var orig = window.__iimApp.renderVals.bind(window.__iimApp);
-    window.__iimApp.renderVals = function() {
-      var v = orig();
-      // "[FirstName]'s Timetable" instead of "My Week — Time Table Builder"
-      v.titleMain = firstName + '\u2019s Timetable';
-      // "MBA · Module 5 · Section X" instead of "PGDM · Module 5 · Section X"
-      if (v.eyebrow) v.eyebrow = v.eyebrow.replace('PGDM', prog);
-      // Suppress "Placed 'X' with Prof Y." notifications — the course is visible on the grid
-      v.subline = '';
-      return v;
-    };
-    // Trigger one re-render to apply immediately
+    _rvFirstName = firstName || '';
+    _rvProg = progName(section);
+    // Only install the wrapper once; subsequent calls just update the vars above
+    if (!window.__iimApp._rvPatched) {
+      window.__iimApp._rvPatched = true;
+      var origRV = window.__iimApp.renderVals.bind(window.__iimApp);
+      window.__iimApp.renderVals = function() {
+        var v = origRV();
+        // "[FirstName]'s Timetable" instead of "My Week — Time Table Builder"
+        v.titleMain = _rvFirstName + '\u2019s Timetable';
+        // Replace any program label (PGDM / MBA / MBA-OSCM / MBA-SM) with current one
+        if (v.eyebrow) {
+          ['MBA-OSCM', 'MBA-SM', 'MBA', 'PGDM'].forEach(function(p) {
+            v.eyebrow = v.eyebrow.replace(p, _rvProg);
+          });
+        }
+        // Suppress "Placed 'X' with Prof Y." notifications — course is visible on the grid
+        v.subline = '';
+        return v;
+      };
+    }
+    // Trigger one re-render to apply the new values immediately
     try { window.__iimApp.setState({}); } catch(e) {}
   }
 
@@ -252,22 +263,18 @@ document.addEventListener('DOMContentLoaded', async function() {
         var c = all.find(function(x) { return x.id === id; });
         if (c) { try { window.__iimApp.placeCourse(id, 0); } catch(e) {} }
       });
-      // Sync with updated timetable Excel AFTER courses are placed.
-      // If no Excel data loaded, clear the grid entirely so old bundle data
-      // doesn't linger — only the uploaded calendar's data should appear.
+      // Sync with Excel AFTER applySection + electives are placed.
       if (byName) {
         setTimeout(function() {
           try { window.__iimApp.syncUploadedTimetable(byName); } catch(e) { console.warn('[iim] sync error:', e); }
         }, 200);
-      } else {
-        // No Excel data — clear the grid so no stale old-calendar data shows
-        try { if (window.__iimApp.onClearAll) window.__iimApp.onClearAll(); } catch(e) {}
       }
     }, 150);
   }
 
   /* ── ONBOARDING ── */
   var _pendingElectives = [];
+  var _byName = null; // cached Excel timetable data, reused by Modify button
 
   function showOnboarding(existing, afterDone) {
     _pendingElectives = existing ? (getSaved() || []) : [];
@@ -417,8 +424,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     md.addEventListener('mouseout',  function() { this.style.borderColor='var(--line,rgba(20,21,82,.1))'; });
     md.addEventListener('click', function() {
       showOnboarding(getProfile(), function(nm, sec, elecs) {
-        if (window.__iimApp && window.__iimApp.onClearAll) window.__iimApp.onClearAll();
-        applyAll(sec, elecs);
+        applyAll(sec, elecs, _byName);
         setTimeout(function() { patchRenderVals(nm.split(' ')[0], sec); }, 200);
       });
     });
@@ -512,6 +518,7 @@ document.addEventListener('DOMContentLoaded', async function() {
       // Parse timetable Excel first, then show onboarding or apply profile
       // byName is passed into applyAll so sync runs AFTER courses are placed
       loadDefaultTimetable(function(byName) {
+        _byName = byName; // cache for Modify button reuse
         if (!profile) {
           showOnboarding(null, function(name, section, elecs) {
             patchButtons(name, section);
