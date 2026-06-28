@@ -209,14 +209,6 @@ document.addEventListener('DOMContentLoaded', async function() {
     });
   }
 
-  /* ── favicon swap ── */
-  function setFavicon() {
-    document.querySelectorAll('link[rel*="icon"]').forEach(function(l) { l.remove(); });
-    var lk = document.createElement('link');
-    lk.rel = 'icon'; lk.href = LOGO;
-    document.head.appendChild(lk);
-  }
-
   /* ── hide sidebar via injected CSS ── */
   function hideSidebar() {
     if (document.getElementById('_iimStyle')) return;
@@ -230,46 +222,59 @@ document.addEventListener('DOMContentLoaded', async function() {
   function personalizeUI(name, section) {
     var firstName = name ? name.split(' ')[0] : '';
     var prog = progName(section);
+    var header = document.querySelector('header');
+    if (!header) return;
 
-    // Replace title text
-    document.querySelectorAll('div,h1,h2').forEach(function(el) {
-      if (el.children.length > 0) return;
-      var t = el.textContent.trim();
-      if (t === 'My Week — Time Table Builder' || t.endsWith("'s Class Schedule 📅")) {
-        el.textContent = firstName + '\u2019s Class Schedule \uD83D\uDCC5';
+    // Walk TEXT NODES directly — bypasses el.children guard that blocked reactive nodes,
+    // and fixes "Module 5" (mixed-case) vs old "MODULE" mismatch
+    var walker = document.createTreeWalker(header, NodeFilter.SHOW_TEXT, null, false);
+    var node;
+    while ((node = walker.nextNode())) {
+      var t = node.textContent.trim();
+      if (!t) continue;
+      // Title: "My Week — Time Table Builder" → "[Name]’s Class Schedule 📅"
+      if (t.indexOf('My Week') !== -1 || t.indexOf('\u2019s Class Schedule') !== -1) {
+        node.textContent = firstName + '\u2019s Class Schedule \uD83D\uDCC5';
+        continue;
       }
-      // Replace PGDM with correct program
-      if (t.includes('PGDM') && t.includes('MODULE')) {
-        el.textContent = t.replace('PGDM', prog);
+      // Program label: "PGDM · Module 5 · Section X" → "MBA · Module 5 · Section X"
+      if (t.indexOf('PGDM') !== -1 && t.toLowerCase().indexOf('module') !== -1) {
+        node.textContent = t.replace('PGDM', prog);
+        continue;
       }
-      // Also fix any previously set wrong prog
-      ['MBA-OSCM','MBA-SM','MBA'].forEach(function(p) {
-        if (t.includes(p) && t.includes('MODULE')) {
-          el.textContent = t.replace(p, prog);
+      // Fix previously-set prog when section changes
+      var replaced = false;
+      ['MBA-OSCM', 'MBA-SM', 'MBA'].forEach(function(p) {
+        if (!replaced && t.indexOf(p) !== -1 && t.toLowerCase().indexOf('module') !== -1) {
+          node.textContent = t.replace(p, prog);
+          replaced = true;
         }
       });
-    });
+    }
   }
 
-  /* ── apply section + electives, then sync updated timetable data ── */
+  /* ── apply section + electives, then sync with the uploaded timetable ── */
   function applyAll(section, electiveIds, byName) {
     if (!window.__iimApp) return;
     window.__iimApp.applySection(section);
     setTimeout(function() {
-      // sync section dropdown
       var sel = document.querySelector('select');
       if (sel) sel.value = section;
-      // place electives
       var all = window.__iimApp.allCourses();
       electiveIds.forEach(function(id) {
         var c = all.find(function(x) { return x.id === id; });
         if (c) { try { window.__iimApp.placeCourse(id, 0); } catch(e) {} }
       });
-      // Sync uploaded timetable AFTER courses are placed (needs them on grid to update)
+      // Sync with updated timetable Excel AFTER courses are placed.
+      // If no Excel data loaded, clear the grid entirely so old bundle data
+      // doesn't linger — only the uploaded calendar's data should appear.
       if (byName) {
         setTimeout(function() {
           try { window.__iimApp.syncUploadedTimetable(byName); } catch(e) { console.warn('[iim] sync error:', e); }
         }, 200);
+      } else {
+        // No Excel data — clear the grid so no stale old-calendar data shows
+        try { if (window.__iimApp.onClearAll) window.__iimApp.onClearAll(); } catch(e) {}
       }
     }, 150);
   }
@@ -489,7 +494,6 @@ document.addEventListener('DOMContentLoaded', async function() {
 
   /* ── INIT ── */
   document.addEventListener('DOMContentLoaded', function() {
-    setFavicon();
     // Show dark cover instantly so users never see the raw timetable before onboarding
     var cover = document.createElement('div');
     cover.id = '_iimCover';
