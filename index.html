@@ -218,39 +218,26 @@ document.addEventListener('DOMContentLoaded', async function() {
     document.head.appendChild(st);
   }
 
-  /* ── personalise header (re-runs via MutationObserver) ── */
-  function personalizeUI(name, section) {
-    var firstName = name ? name.split(' ')[0] : '';
+  /* ── patch renderVals at source so the reactive framework renders the right text ── */
+  // The framework re-renders the header every second (clock), so MutationObserver-based
+  // replacements always lose the race. Patching renderVals makes the framework itself
+  // output the correct title, program label, and suppresses the "Placed X..." toasts.
+  function patchRenderVals(firstName, section) {
+    if (!window.__iimApp || typeof window.__iimApp.renderVals !== 'function') return;
     var prog = progName(section);
-    var header = document.querySelector('header');
-    if (!header) return;
-
-    // Walk TEXT NODES directly — bypasses el.children guard that blocked reactive nodes,
-    // and fixes "Module 5" (mixed-case) vs old "MODULE" mismatch
-    var walker = document.createTreeWalker(header, NodeFilter.SHOW_TEXT, null, false);
-    var node;
-    while ((node = walker.nextNode())) {
-      var t = node.textContent.trim();
-      if (!t) continue;
-      // Title: "My Week — Time Table Builder" → "[Name]’s Class Schedule 📅"
-      if (t.indexOf('My Week') !== -1 || t.indexOf('\u2019s Class Schedule') !== -1) {
-        node.textContent = firstName + '\u2019s Class Schedule \uD83D\uDCC5';
-        continue;
-      }
-      // Program label: "PGDM · Module 5 · Section X" → "MBA · Module 5 · Section X"
-      if (t.indexOf('PGDM') !== -1 && t.toLowerCase().indexOf('module') !== -1) {
-        node.textContent = t.replace('PGDM', prog);
-        continue;
-      }
-      // Fix previously-set prog when section changes
-      var replaced = false;
-      ['MBA-OSCM', 'MBA-SM', 'MBA'].forEach(function(p) {
-        if (!replaced && t.indexOf(p) !== -1 && t.toLowerCase().indexOf('module') !== -1) {
-          node.textContent = t.replace(p, prog);
-          replaced = true;
-        }
-      });
-    }
+    var orig = window.__iimApp.renderVals.bind(window.__iimApp);
+    window.__iimApp.renderVals = function() {
+      var v = orig();
+      // "[FirstName]'s Timetable" instead of "My Week — Time Table Builder"
+      v.titleMain = firstName + '\u2019s Timetable';
+      // "MBA · Module 5 · Section X" instead of "PGDM · Module 5 · Section X"
+      if (v.eyebrow) v.eyebrow = v.eyebrow.replace('PGDM', prog);
+      // Suppress "Placed 'X' with Prof Y." notifications — the course is visible on the grid
+      v.subline = '';
+      return v;
+    };
+    // Trigger one re-render to apply immediately
+    try { window.__iimApp.setState({}); } catch(e) {}
   }
 
   /* ── apply section + electives, then sync with the uploaded timetable ── */
@@ -432,7 +419,7 @@ document.addEventListener('DOMContentLoaded', async function() {
       showOnboarding(getProfile(), function(nm, sec, elecs) {
         if (window.__iimApp && window.__iimApp.onClearAll) window.__iimApp.onClearAll();
         applyAll(sec, elecs);
-        setTimeout(function() { personalizeUI(nm, sec); }, 200);
+        setTimeout(function() { patchRenderVals(nm.split(' ')[0], sec); }, 200);
       });
     });
 
@@ -463,15 +450,6 @@ document.addEventListener('DOMContentLoaded', async function() {
         sel.appendChild(o);
       });
     }
-  }
-
-  /* ── observe DOM to re-apply personalisation after re-renders ── */
-  function watchAndPersonalize(name, section) {
-    var header = document.querySelector('header');
-    if (!header) return;
-    var obs = new MutationObserver(function() { personalizeUI(name, section); });
-    obs.observe(header, { childList: true, subtree: true, characterData: true });
-    personalizeUI(name, section);
   }
 
   /* ── auto-load default timetable from assets/timetable.xlsx ── */
@@ -538,7 +516,7 @@ document.addEventListener('DOMContentLoaded', async function() {
           showOnboarding(null, function(name, section, elecs) {
             patchButtons(name, section);
             applyAll(section, elecs, byName);
-            setTimeout(function() { watchAndPersonalize(name, section); }, 300);
+            setTimeout(function() { patchRenderVals(name.split(' ')[0], section); }, 300);
           });
           // Onboarding overlay (z:9999) sits above cover (z:9990); fade cover so onboarding appears
           setTimeout(fadeCover, 60);
@@ -546,7 +524,7 @@ document.addEventListener('DOMContentLoaded', async function() {
           patchButtons(profile.name, profile.section);
           applyAll(profile.section, saved, byName);
           setTimeout(function() {
-            watchAndPersonalize(profile.name, profile.section);
+            patchRenderVals(profile.name.split(' ')[0], profile.section);
             fadeCover();
           }, 300);
         }
